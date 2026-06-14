@@ -32,8 +32,9 @@ export async function POST(req: NextRequest) {
     // 2. Parse request
     const body = await req.json();
     
-    // We only support claude-opus-4.8 for now as per user request
-    const model = 'claude-opus-4-8'; 
+    // Support custom model names dari request user (misal: gpt-5, claude-opus-4.7)
+    // Kalo kosong, default ke claude-opus-4-8
+    const model = body.model || 'claude-opus-4-8'; 
     const messages = body.messages || [];
 
     // 3. Proxy to the Master API
