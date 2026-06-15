@@ -39,45 +39,74 @@ export async function POST(req: NextRequest) {
     const model = body.model || 'claude-opus-4-8'; 
     const messages = body.messages || [];
 
-    // 3. Proxy to the Master API
-    const response = await fetch(MASTER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.PANEL_API_KEY || ''}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        max_tokens: body.max_tokens || 4096,
-        stream: body.stream !== false, // Default to streaming
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return new Response(
-        JSON.stringify({ error: `Upstream API Error: ${response.status}`, details: errorText }),
-        { status: response.status, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Update usage stats (fire and forget)
+    // Update usage stats early (fire and forget)
     updateDoc(keyRef, {
       requestCount: increment(1),
       lastUsedAt: new Date().toISOString()
     }).catch(console.error);
 
-    // 4. Return the response stream to the client
-    // Copy the response headers but ensure it's an event stream
-    const headers = new Headers(response.headers);
-    headers.set('Content-Type', 'text/event-stream');
-    headers.set('Cache-Control', 'no-cache');
-    headers.set('Connection', 'keep-alive');
+    const encoder = new TextEncoder();
+    
+    // 3. Create a custom ReadableStream to bypass Vercel timeouts
+    // This stream sends an invisible space every 5 seconds while waiting for the upstream API
+    const stream = new ReadableStream({
+      async start(controller) {
+        // Ping immediately so Vercel knows the response has started
+        controller.enqueue(encoder.encode(' '));
+        
+        // Keep pinging every 5 seconds
+        const pingInterval = setInterval(() => {
+          controller.enqueue(encoder.encode(' '));
+        }, 5000);
 
-    return new Response(response.body, {
-      status: response.status,
-      headers,
+        try {
+          const fetchResponse = await fetch(MASTER_API_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.PANEL_API_KEY || ''}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              max_tokens: body.max_tokens || 4096,
+              stream: body.stream !== false,
+            }),
+          });
+
+          clearInterval(pingInterval);
+
+          if (!fetchResponse.ok) {
+            const errorText = await fetchResponse.text();
+            controller.enqueue(encoder.encode(JSON.stringify({ error: `Upstream API Error: ${fetchResponse.status}`, details: errorText })));
+            controller.close();
+            return;
+          }
+
+          if (fetchResponse.body) {
+            const reader = fetchResponse.body.getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              controller.enqueue(value);
+            }
+          }
+          controller.close();
+        } catch (error: any) {
+          clearInterval(pingInterval);
+          controller.enqueue(encoder.encode(JSON.stringify({ error: 'Gateway Fetch Error', details: error.message })));
+          controller.close();
+        }
+      }
+    });
+
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
     });
 
   } catch (error: any) {
