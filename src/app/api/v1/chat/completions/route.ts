@@ -2,7 +2,6 @@ import { NextRequest } from 'next/server';
 import { db } from '@/../lib/firebase';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
 
-export const runtime = 'edge'; // Edge Runtime: no hard kill after 60s, unlimited streaming once first byte sent
 export const maxDuration = 60;
 
 const MASTER_API_URL = 'https://panelnya.online/v1/chat/completions';
