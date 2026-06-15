@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server';
 import { db } from '@/../lib/firebase';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
 
+export const maxDuration = 60; // Allow up to 60 seconds for Vercel Hobby
+
 const MASTER_API_URL = 'https://panelnya.online/v1/chat/completions';
 
 export async function POST(req: NextRequest) {
